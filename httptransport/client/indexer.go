@@ -17,6 +17,7 @@ import (
 )
 
 var _ indexer.Service = (*HTTP)(nil)
+var _ indexer.LayerReporter = (*HTTP)(nil)
 
 func (s *HTTP) AffectedManifests(ctx context.Context, v []claircore.Vulnerability) (*claircore.AffectedManifests, error) {
 	u, err := s.addr.Parse(httptransport.AffectedManifestAPIPath)
@@ -147,6 +148,45 @@ func (s *HTTP) IndexReport(ctx context.Context, manifest claircore.Digest) (*cla
 		return nil, false, &clairerror.ErrBadIndexReport{E: err}
 	}
 	return ir, true, nil
+}
+
+// ManifestLayers returns the ordered layer digests for a manifest.
+func (s *HTTP) ManifestLayers(ctx context.Context, manifest claircore.Digest) ([]claircore.Digest, error) {
+	u, err := s.addr.Parse(path.Join(httptransport.ManifestLayersAPIPath, manifest.String()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req, err := httputil.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := s.sign(ctx, req); err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := s.c.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to do request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return nil, nil
+	default:
+		return nil, &clairerror.ErrRequestFail{
+			Code:   resp.StatusCode,
+			Status: resp.Status,
+		}
+	}
+	var out struct {
+		Layers []claircore.Digest `json:"layers"`
+	}
+	dec := codec.GetDecoder(resp.Body)
+	defer codec.PutDecoder(dec)
+	if err := dec.Decode(&out); err != nil {
+		return nil, fmt.Errorf("failed to decode manifest layers: %w", err)
+	}
+	return out.Layers, nil
 }
 
 func (s *HTTP) State(ctx context.Context) (string, error) {

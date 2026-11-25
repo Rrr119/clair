@@ -15,6 +15,9 @@ func init() {
 	// This is documented to cause "smart buffering".
 	jsonHandle.WriterBufferSize = 4096
 	jsonHandle.ReaderBufferSize = 4096
+	// Canonical encoding sorts map keys. Besides making responses
+	// deterministic, this keeps reports byte-for-byte stable across rescans.
+	jsonHandle.Canonical = true
 	// Force calling time.Time's Marshal function. This causes an allocation on
 	// every time.Time value, but is the same behavior as the stdlib json
 	// encoder. If we decide nulls are OK, this should get removed.

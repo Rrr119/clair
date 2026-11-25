@@ -1,0 +1,50 @@
+{
+  "$id": "https://clairproject.org/api/http/v1/layer_attribution.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Layer Attribution",
+  "type": "object",
+  "description": "Packages and vulnerabilities introduced by a single image layer.",
+  "properties": {
+    "index": {
+      "description": "The layer's position in the image, starting at zero.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "hash": {
+      "$ref": "digest.schema.json",
+      "description": "Digest of the layer blob."
+    },
+    "packages": {
+      "description": "Packages introduced by this layer.",
+      "type": "array",
+      "items": {
+        "$ref": "package.schema.json"
+      }
+    },
+    "vulnerabilities": {
+      "description": "Vulnerabilities introduced by packages in this layer.",
+      "type": "array",
+      "items": {
+        "$ref": "vulnerability.schema.json"
+      }
+    },
+    "package_vulnerabilities": {
+      "description": "A mapping of Vulnerability identifier lists indexed by Package identifier for this layer.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "hash",
+    "index",
+    "package_vulnerabilities",
+    "packages",
+    "vulnerabilities"
+  ]
+}

@@ -3,6 +3,7 @@ package httptransport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptrace"
@@ -21,6 +22,7 @@ import (
 	"github.com/quay/clair/v4/indexer"
 	"github.com/quay/clair/v4/internal/codec"
 	"github.com/quay/clair/v4/internal/httputil"
+	"github.com/quay/clair/v4/layerreport"
 	"github.com/quay/clair/v4/matcher"
 	"github.com/quay/clair/v4/middleware/compress"
 )
@@ -43,6 +45,8 @@ func NewMatcherV1(_ context.Context, prefix string, srv matcher.Service, indexer
 	}
 	p := path.Join(prefix, "vulnerability_report") + "/"
 	m.Handle(p, matcherv1wrapper.wrapFunc(p, h.vulnerabilityReport))
+	p = path.Join(prefix, "layer_report") + "/"
+	m.Handle(p, matcherv1wrapper.wrapFunc(p, h.layerReport))
 	p = path.Join(prefix, "internal", "update_operation")
 	m.Handle(p, matcherv1wrapper.wrapFunc(p, h.updateOperationHandlerGet))
 	p = path.Join(prefix, "internal", "update_operation") + "/"
@@ -102,6 +106,11 @@ func (h *MatcherV1) vulnerabilityReport(w http.ResponseWriter, r *http.Request) 
 	ctx = httptrace.WithClientTrace(ctx, oteltrace.NewClientTrace(ctx))
 
 	manifestStr := path.Base(r.URL.Path)
+	// Also accept the layer-only path as a convenience:
+	// /vulnerability_report/{digest}/layers
+	if manifestStr == "layers" {
+		manifestStr = path.Base(path.Dir(r.URL.Path))
+	}
 	if manifestStr == "" {
 		apiError(ctx, w, http.StatusBadRequest, "malformed path. provide a single manifest hash")
 	}
@@ -110,29 +119,13 @@ func (h *MatcherV1) vulnerabilityReport(w http.ResponseWriter, r *http.Request) 
 		apiError(ctx, w, http.StatusBadRequest, "malformed path: %v", err)
 	}
 
-	initd, err := h.srv.Initialized(ctx)
-	if err != nil {
-		apiError(ctx, w, http.StatusInternalServerError, "initialization error: %v", err)
-	}
-	if !initd {
-		w.WriteHeader(http.StatusAccepted)
+	report, status, err := h.scanReport(ctx, manifest)
+	if status == http.StatusAccepted {
+		w.WriteHeader(status)
 		return
 	}
-
-	indexReport, ok, err := h.indexerSrv.IndexReport(ctx, manifest)
-	// check err first
 	if err != nil {
-		apiError(ctx, w, http.StatusInternalServerError, "experienced a server side error: %v", err)
-	}
-	// now check present and finished only after confirming no err
-	if !ok || indexReport.State != indexerController.IndexFinished.String() {
-		apiError(ctx, w, http.StatusNotFound, "index report for manifest %q not found", manifest.String())
-		return
-	}
-
-	vulnReport, err := h.srv.Scan(ctx, indexReport)
-	if err != nil {
-		apiError(ctx, w, http.StatusInternalServerError, "failed to start scan: %v", err)
+		apiError(ctx, w, status, "%v", err)
 	}
 
 	w.Header().Set("content-type", "application/vnd.clair.index_report.v1+json")
@@ -141,7 +134,71 @@ func (h *MatcherV1) vulnerabilityReport(w http.ResponseWriter, r *http.Request) 
 	defer writerError(w, &err)()
 	enc := codec.GetEncoder(w)
 	defer codec.PutEncoder(enc)
-	err = enc.Encode(vulnReport)
+	err = enc.Encode(report)
+}
+
+func (h *MatcherV1) layerReport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if r.Method != http.MethodGet {
+		apiError(ctx, w, http.StatusMethodNotAllowed, "endpoint only allows GET")
+	}
+	ctx, done := context.WithCancel(ctx)
+	defer done()
+
+	manifest, err := claircore.ParseDigest(path.Base(r.URL.Path))
+	if err != nil {
+		apiError(ctx, w, http.StatusBadRequest, "malformed path: %v", err)
+	}
+	report, status, err := h.scanReport(ctx, manifest)
+	if status == http.StatusAccepted {
+		w.WriteHeader(status)
+		return
+	}
+	if err != nil {
+		apiError(ctx, w, status, "%v", err)
+	}
+
+	w.Header().Set("content-type", "application/vnd.clair.layer_report.v1+json")
+	setCacheControl(w, h.Cache)
+	defer writerError(w, &err)()
+	enc := codec.GetEncoder(w)
+	defer codec.PutEncoder(enc)
+	err = enc.Encode(report)
+}
+
+func (h *MatcherV1) scanReport(ctx context.Context, manifest claircore.Digest) (*layerreport.Report, int, error) {
+	initd, err := h.srv.Initialized(ctx)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("initialization error: %w", err)
+	}
+	if !initd {
+		return nil, http.StatusAccepted, nil
+	}
+
+	indexReport, ok, err := h.indexerSrv.IndexReport(ctx, manifest)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("experienced a server side error: %w", err)
+	}
+	if !ok || indexReport.State != indexerController.IndexFinished.String() {
+		return nil, http.StatusNotFound, fmt.Errorf("index report for manifest %q not found", manifest.String())
+	}
+
+	vulnReport, err := h.srv.Scan(ctx, indexReport)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("failed to start scan: %w", err)
+	}
+
+	var manifestLayers []claircore.Digest
+	if reporter, ok := h.indexerSrv.(indexer.LayerReporter); ok {
+		manifestLayers, err = reporter.ManifestLayers(ctx, manifest)
+		if err != nil {
+			slog.WarnContext(ctx, "unable to retrieve manifest layers; falling back to digest order",
+				"manifest", manifest.String(),
+				"reason", err)
+			manifestLayers = nil
+		}
+	}
+	return layerreport.Build(vulnReport, manifestLayers), 0, nil
 }
 
 func (h *MatcherV1) updateDiffHandler(w http.ResponseWriter, r *http.Request) {

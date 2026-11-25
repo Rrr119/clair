@@ -18,6 +18,7 @@ import (
 
 	"github.com/quay/clair/v4/internal/codec"
 	"github.com/quay/clair/v4/internal/httputil"
+	"github.com/quay/clair/v4/layerreport"
 )
 
 // ReportCmd is the "report" subcommand.
@@ -112,7 +113,7 @@ type Formatter interface {
 //
 // Users should examine Err first to determine if the request succeeded.
 type Result struct {
-	Report *claircore.VulnerabilityReport
+	Report *layerreport.Report
 	Err    error
 	Name   string
 }

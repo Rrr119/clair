@@ -51,3 +51,12 @@ type Stater interface {
 type Affected interface {
 	AffectedManifests(ctx context.Context, vulns []claircore.Vulnerability) (*claircore.AffectedManifests, error)
 }
+
+// LayerReporter is an optional interface for reporting the ordered layer
+// digests that make up a manifest.
+//
+// Services that cannot provide layer order may omit this interface; callers
+// should degrade to digest-ordered attribution in that case.
+type LayerReporter interface {
+	ManifestLayers(ctx context.Context, manifest claircore.Digest) ([]claircore.Digest, error)
+}

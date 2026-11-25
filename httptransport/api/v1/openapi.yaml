@@ -173,6 +173,53 @@ paths:
       description: Given a Manifest's content addressable hash, an IndexReport will be retrieved if it exists.
     parameters:
       - $ref: '#/components/parameters/digest'
+  /indexer/api/v1/layers/{digest}:
+    get:
+      operationId: GetManifestLayers
+      responses:
+        "200":
+          description: Ordered layer digests for the manifest
+          content:
+            application/vnd.clair.manifest_layers.v1+json:
+              schema:
+                type: object
+                properties:
+                  manifest_hash:
+                    $ref: '#/components/schemas/digest'
+                  layers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/digest'
+                required:
+                  - manifest_hash
+                  - layers
+                additionalProperties: false
+            application/json:
+              schema:
+                type: object
+                properties:
+                  manifest_hash:
+                    $ref: '#/components/schemas/digest'
+                  layers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/digest'
+                required:
+                  - manifest_hash
+                  - layers
+                additionalProperties: false
+        "400":
+          $ref: '#/components/responses/bad_request'
+        "404":
+          $ref: '#/components/responses/not_found'
+        default:
+          $ref: '#/components/responses/oops'
+      tags:
+        - indexer
+      summary: Retrieve the ordered layers for a Manifest
+      description: Given a Manifest's content addressable hash, return the layer digests in base-to-top order.
+    parameters:
+      - $ref: '#/components/parameters/digest'
   /indexer/api/v1/index_state:
     get:
       operationId: IndexState
@@ -364,6 +411,31 @@ paths:
         - matcher
       summary: Retrieve a VulnerabilityReport for a Manifest
       description: Given a Manifest's content addressable hash a VulnerabilityReport will be created. The Manifest **must** have been Indexed first via the Index endpoint.
+    parameters:
+      - $ref: '#/components/parameters/digest'
+  /matcher/api/v1/layer_report/{digest}:
+    get:
+      operationId: GetLayerReport
+      responses:
+        "400":
+          $ref: '#/components/responses/bad_request'
+        "404":
+          $ref: '#/components/responses/not_found'
+        default:
+          $ref: '#/components/responses/oops'
+        "200":
+          description: Layer attribution for the manifest's vulnerabilities
+          content:
+            application/vnd.clair.layer_report.v1+json:
+              schema:
+                $ref: '#/components/schemas/vulnerability_report'
+            application/json:
+              schema:
+                $ref: '#/components/schemas/vulnerability_report'
+      tags:
+        - matcher
+      summary: Retrieve layer attribution for a Manifest
+      description: Given a Manifest's content addressable hash, return the VulnerabilityReport augmented with layer attribution. The Manifest **must** have been Indexed first via the Index endpoint.
     parameters:
       - $ref: '#/components/parameters/digest'
   /notifier/api/v1/notification/{id}:
@@ -715,6 +787,44 @@ components:
       required:
         - hash
         - uri
+    layer_attribution:
+      $id: https://clairproject.org/api/http/v1/layer_attribution.schema.json
+      $schema: https://json-schema.org/draft/2020-12/schema
+      title: Layer Attribution
+      type: object
+      description: Packages and vulnerabilities introduced by a single image layer.
+      properties:
+        index:
+          description: The layer's position in the image, starting at zero.
+          type: integer
+          minimum: 0
+        hash:
+          $ref: digest.schema.json
+          description: Digest of the layer blob.
+        packages:
+          description: Packages introduced by this layer.
+          type: array
+          items:
+            $ref: package.schema.json
+        vulnerabilities:
+          description: Vulnerabilities introduced by packages in this layer.
+          type: array
+          items:
+            $ref: vulnerability.schema.json
+        package_vulnerabilities:
+          description: A mapping of Vulnerability identifier lists indexed by Package identifier for this layer.
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      additionalProperties: false
+      required:
+        - hash
+        - index
+        - package_vulnerabilities
+        - packages
+        - vulnerabilities
     manifest:
       $id: https://clairproject.org/api/http/v1/manifest.schema.json
       $schema: https://json-schema.org/draft/2020-12/schema
@@ -1153,6 +1263,37 @@ components:
           description: A mapping of extra "enrichment" data by type
           additionalProperties:
             type: array
+        layers:
+          description: Per-layer attribution of packages and vulnerabilities. Layers are in image order when available and digest order otherwise.
+          type: array
+          items:
+            $ref: layer_attribution.schema.json
+        layer_packages:
+          description: A mapping of Package identifier lists indexed by layer digest.
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        layer_vulnerabilities:
+          description: A mapping of Vulnerability identifier lists indexed by layer digest.
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        package_layers:
+          description: A mapping of introducing layer digests indexed by Package identifier.
+          type: object
+          additionalProperties:
+            $ref: digest.schema.json
+        vulnerability_layers:
+          description: A mapping of layer digest lists indexed by Vulnerability identifier.
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: digest.schema.json
       additionalProperties: false
       required:
         - distributions

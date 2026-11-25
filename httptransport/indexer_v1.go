@@ -37,6 +37,8 @@ func NewIndexerV1(_ context.Context, prefix string, srv indexer.Service, topt ot
 	m.Handle(p, indexerv1wrapper.wrapFunc(p, h.indexReport))
 	p += "/"
 	m.Handle(p, indexerv1wrapper.wrapFunc(path.Join(p, ":digest"), h.indexReportOne))
+	p = path.Join(prefix, "layers") + "/"
+	m.Handle(p, indexerv1wrapper.wrapFunc(path.Join(p, ":digest"), h.manifestLayers))
 	p = path.Join(prefix, "index_state")
 	m.Handle(p, indexerv1wrapper.wrapFunc(p, h.indexState))
 	p = path.Join(prefix, "internal", "affected_manifest") + "/"
@@ -244,6 +246,48 @@ func (h *IndexerV1) indexState(w http.ResponseWriter, r *http.Request) {
 		State string `json:"state"`
 	}{
 		State: s,
+	})
+}
+
+func (h *IndexerV1) manifestLayers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if r.Method != http.MethodGet {
+		apiError(ctx, w, http.StatusMethodNotAllowed, "endpoint only allows GET")
+	}
+	d, err := getDigest(w, r)
+	if err != nil {
+		apiError(ctx, w, http.StatusBadRequest, "malformed path: %v", err)
+	}
+	allow := []string{"application/vnd.clair.manifest_layers.v1+json", "application/json"}
+	switch err := pickContentType(w, r, allow); {
+	case errors.Is(err, nil):
+	case errors.Is(err, ErrMediaType):
+		apiError(ctx, w, http.StatusUnsupportedMediaType, "unable to negotiate common media type for %v", allow)
+	default:
+		apiError(ctx, w, http.StatusBadRequest, "malformed request: %v", err)
+	}
+
+	reporter, ok := h.srv.(indexer.LayerReporter)
+	if !ok {
+		apiError(ctx, w, http.StatusNotImplemented, "layer reporting is not implemented")
+	}
+	layers, err := reporter.ManifestLayers(ctx, d)
+	if err != nil {
+		apiError(ctx, w, http.StatusInternalServerError, "could not retrieve manifest layers: %v", err)
+	}
+	if layers == nil {
+		layers = []claircore.Digest{}
+	}
+
+	defer writerError(w, &err)()
+	enc := codec.GetEncoder(w)
+	defer codec.PutEncoder(enc)
+	err = enc.Encode(struct {
+		ManifestHash claircore.Digest   `json:"manifest_hash"`
+		Layers       []claircore.Digest `json:"layers"`
+	}{
+		ManifestHash: d,
+		Layers:       layers,
 	})
 }
 

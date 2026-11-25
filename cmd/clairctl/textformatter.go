@@ -45,6 +45,7 @@ const tabwriterTmpl = `
 {{- define "found" -}}
 {{with $r := .}}{{range $id, $v := .Report.PackageVulnerabilities}}{{range $d := $v -}}
 {{base $r.Name}}	found	{{with index $r.Report.Packages $id}}{{.Name}}	{{.Version}}{{end}}
+	{{- with index $r.Report.PackageLayers $id}}	layer:{{$r.Report.LayerIndex .}} {{.}}{{end}}
 	{{- with index $r.Report.Vulnerabilities $d}}	{{.Name}}
 	{{- with .FixedInVersion}}	(fixed: {{.}}){{end}}{{end}}
 {{end}}{{end}}{{end}}{{end}}

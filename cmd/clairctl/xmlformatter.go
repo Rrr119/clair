@@ -66,7 +66,7 @@ func (j *junitTestsuite) Init(r *Result) error {
 	j.NumTests = 0
 	j.Props.Props = make([]junitProp, 1)
 	j.Props.Props[0].Name = "manifest"
-	j.Props.Props[0].Value = r.Report.Hash.String()
+	j.Props.Props[0].Value = r.Report.ManifestHash.String()
 
 	if r.Err != nil {
 		j.Tests = []junitTestcase{

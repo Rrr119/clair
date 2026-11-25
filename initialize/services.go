@@ -187,7 +187,7 @@ func localIndexer(ctx context.Context, cfg *config.Config) (indexer.Service, err
 	if err != nil {
 		return nil, mkErr(err)
 	}
-	return s, nil
+	return indexer.NewPostgresIndexer(s, pool), nil
 }
 
 func remoteIndexer(ctx context.Context, cfg *config.Config, addr string) (indexer.Service, error) {

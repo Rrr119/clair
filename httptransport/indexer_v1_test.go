@@ -3,6 +3,7 @@ package httptransport
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -20,6 +21,48 @@ import (
 	"github.com/quay/clair/v4/indexer"
 	"github.com/quay/clair/v4/internal/httputil"
 )
+
+func TestManifestLayers(t *testing.T) {
+	ctx := test.Logging(t)
+	digest := claircore.MustParseDigest("sha256:0000000000000000000000000000000000000000000000000000000000000000")
+	layer := claircore.MustParseDigest("sha256:1111111111111111111111111111111111111111111111111111111111111111")
+	i := &indexer.Mock{
+		ManifestLayers_: func(_ context.Context, d claircore.Digest) ([]claircore.Digest, error) {
+			if d.String() != digest.String() {
+				t.Fatalf("got digest %s, want %s", d, digest)
+			}
+			return []claircore.Digest{layer}, nil
+		},
+	}
+	v1, err := NewIndexerV1(ctx, "", i, otelhttp.WithTracerProvider(noop.NewTracerProvider()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(v1)
+	defer srv.Close()
+
+	res, err := srv.Client().Get(srv.URL + "/layers/" + digest.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if got, want := res.StatusCode, http.StatusOK; got != want {
+		t.Fatalf("got status %d, want %d", got, want)
+	}
+	var got struct {
+		ManifestHash claircore.Digest   `json:"manifest_hash"`
+		Layers       []claircore.Digest `json:"layers"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ManifestHash.String() != digest.String() {
+		t.Fatalf("got manifest %s, want %s", got.ManifestHash, digest)
+	}
+	if len(got.Layers) != 1 || got.Layers[0].String() != layer.String() {
+		t.Fatalf("got layers %v, want [%s]", got.Layers, layer)
+	}
+}
 
 func TestIndexReportBadLayer(t *testing.T) {
 	ctx := test.Logging(t)

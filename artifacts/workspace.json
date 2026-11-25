@@ -1,0 +1,17 @@
+{
+  "root": "/home/dev/feedback/uid38819",
+  "B": "/home/dev/feedback/uid38819",
+  "sha": "f5339245eea75cedf0845744fcc23af657825bdb",
+  "wslDistro": "Ubuntu-26.04",
+  "source": {
+    "owner": "quay",
+    "repo": "clair",
+    "sha": "f5339245eea75cedf0845744fcc23af657825bdb"
+  },
+  "fork": {
+    "owner": "Rrr119",
+    "repo": "clair",
+    "cloneUrl": "https://github.com/Rrr119/clair.git"
+  },
+  "at": "2026-11-25T17:22:45.628Z"
+}

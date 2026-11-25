@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/quay/claircore"
+	indexerController "github.com/quay/claircore/indexer/controller"
 	"github.com/quay/claircore/libvuln/driver"
 	"github.com/quay/claircore/test"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -20,6 +23,7 @@ import (
 
 	"github.com/quay/clair/v4/indexer"
 	"github.com/quay/clair/v4/internal/httputil"
+	"github.com/quay/clair/v4/layerreport"
 	"github.com/quay/clair/v4/matcher"
 )
 
@@ -410,5 +414,118 @@ func testUpdateOperationHandlerGet(t *testing.T) {
 	etag = resp.Header.Get("etag")
 	if etag != idStr {
 		t.Fatalf("got: %v, want: %v", etag, id.String())
+	}
+}
+
+func TestVulnerabilityReportLayerAttribution(t *testing.T) {
+	ctx := test.Logging(t)
+	l0, err := claircore.ParseDigest("sha256:" + fmt.Sprintf("%064d", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l1, err := claircore.ParseDigest("sha256:" + fmt.Sprintf("%064d", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := claircore.ParseDigest("sha256:" + fmt.Sprintf("%064d", 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vr := &claircore.VulnerabilityReport{
+		Hash: manifest,
+		Packages: map[string]*claircore.Package{
+			"openssl": {ID: "openssl", Name: "openssl", Version: "1.0.2"},
+			"curl":    {ID: "curl", Name: "curl", Version: "7.1"},
+		},
+		Environments: map[string][]*claircore.Environment{
+			"openssl": {{IntroducedIn: l0}},
+			"curl":    {{IntroducedIn: l1}},
+		},
+		Vulnerabilities: map[string]*claircore.Vulnerability{
+			"CVE-1": {ID: "CVE-1", Name: "CVE-2020-0001"},
+			"CVE-2": {ID: "CVE-2", Name: "CVE-2020-0002"},
+		},
+		PackageVulnerabilities: map[string][]string{
+			"openssl": {"CVE-1"},
+			"curl":    {"CVE-2"},
+		},
+	}
+	i := &indexer.Mock{
+		IndexReport_: func(context.Context, claircore.Digest) (*claircore.IndexReport, bool, error) {
+			return &claircore.IndexReport{State: indexerController.IndexFinished.String()}, true, nil
+		},
+		ManifestLayers_: func(context.Context, claircore.Digest) ([]claircore.Digest, error) {
+			return []claircore.Digest{l0, l1}, nil
+		},
+	}
+	m := &matcher.Mock{
+		Initialized_: func(context.Context) (bool, error) { return true, nil },
+		Scan_: func(context.Context, *claircore.IndexReport) (*claircore.VulnerabilityReport, error) {
+			return vr, nil
+		},
+	}
+	h := NewMatcherV1(ctx, "", m, i, time.Second, otelhttp.WithTracerProvider(noop.NewTracerProvider()))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = path.Join("/", "vulnerability_report", manifest.String())
+
+	bodies := make([][]byte, 2)
+	for n := range bodies {
+		resp, err := srv.Client().Get(u.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("got status %d, body: %s", resp.StatusCode, body)
+		}
+		bodies[n] = body
+	}
+	if string(bodies[0]) != string(bodies[1]) {
+		t.Fatalf("repeated report requests differ:\nfirst: %s\nsecond: %s", bodies[0], bodies[1])
+	}
+
+	var got layerreport.Report
+	if err := json.Unmarshal(bodies[0], &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Layers) != 2 {
+		t.Fatalf("got %d layers, want 2", len(got.Layers))
+	}
+	if got.Layers[0].Hash.String() != l0.String() || got.Layers[1].Hash.String() != l1.String() {
+		t.Fatalf("layers are not in image order: %v", got.Layers)
+	}
+	if got.PackageLayers["openssl"] != l0.String() || got.PackageLayers["curl"] != l1.String() {
+		t.Fatalf("unexpected package attribution: %v", got.PackageLayers)
+	}
+	if got.LayerVulnerabilities[l0.String()][0] != "CVE-1" {
+		t.Fatalf("unexpected layer vulnerability attribution: %v", got.LayerVulnerabilities)
+	}
+	if p := got.Layers[0].Packages[0]; p.Name != "openssl" || p.Version != "1.0.2" {
+		t.Fatalf("unexpected package version mapping: %+v", p)
+	}
+
+	// Existing consumers must still see all of the old top-level fields.
+	var legacy map[string]json.RawMessage
+	if err := json.Unmarshal(bodies[0], &legacy); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{
+		"manifest_hash", "packages", "distributions", "environments",
+		"vulnerabilities", "package_vulnerabilities", "repository",
+	} {
+		if _, ok := legacy[k]; !ok {
+			t.Fatalf("legacy field %q missing from response", k)
+		}
 	}
 }

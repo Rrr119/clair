@@ -28,6 +28,7 @@ const (
 	internalRoot                 = apiRoot + "internal/"
 	IndexAPIPath                 = indexerRoot + apiRoot + "index_report"
 	IndexReportAPIPath           = indexerRoot + apiRoot + "index_report/"
+	ManifestLayersAPIPath        = indexerRoot + apiRoot + "layers/"
 	IndexStateAPIPath            = indexerRoot + apiRoot + "index_state"
 	AffectedManifestAPIPath      = indexerRoot + internalRoot + "affected_manifest/"
 	VulnerabilityReportPath      = matcherRoot + apiRoot + "vulnerability_report/"

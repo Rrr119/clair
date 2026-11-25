@@ -22,6 +22,7 @@ import (
 	"github.com/quay/clair/v4/httptransport"
 	"github.com/quay/clair/v4/internal/codec"
 	"github.com/quay/clair/v4/internal/httputil"
+	"github.com/quay/clair/v4/layerreport"
 )
 
 var (
@@ -233,7 +234,7 @@ func (c *Client) IndexReport(ctx context.Context, id claircore.Digest, m *clairc
 	return nil
 }
 
-func (c *Client) VulnerabilityReport(ctx context.Context, id claircore.Digest) (*claircore.VulnerabilityReport, error) {
+func (c *Client) VulnerabilityReport(ctx context.Context, id claircore.Digest) (*layerreport.Report, error) {
 	var (
 		req *http.Request
 		res *http.Response
@@ -268,7 +269,7 @@ func (c *Client) VulnerabilityReport(ctx context.Context, id claircore.Digest) (
 	default:
 		return nil, fmt.Errorf("unexpected return status: %d", res.StatusCode)
 	}
-	var report claircore.VulnerabilityReport
+	var report layerreport.Report
 	dec := codec.GetDecoder(res.Body)
 	defer codec.PutDecoder(dec)
 	if err := dec.Decode(&report); err != nil {
